@@ -563,7 +563,7 @@ export default function Home() {
                 </div>
             </Card>
              <p className="text-center text-xs text-gray-400 mt-4">
-                 * ข้อมูลบันทึกในเครื่องนี้เท่านั้น (LocalStorage)
+                 * ยอด/ประวัติซิงก์ผ่านฐานข้อมูลกลาง — เข้าดูและอัปเดตได้จากทุกอุปกรณ์
              </p>
           </div>
 
