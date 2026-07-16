@@ -28,15 +28,53 @@ export default function Home() {
   const [buyPrice, setBuyPrice] = useState('');
   const [rank, setRank] = useState('none');
   const [customAmount, setCustomAmount] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
   // สำหรับการคำนวณ USDT รวม
   const [sellingUSDT, setSellingUSDT] = useState('');
   const [buyingUSDT, setBuyingUSDT] = useState('');
 
-  // LocalStorage Setup
+  // แปลงแถวจากฐานข้อมูล (schema เดิม) -> รูปแบบที่หน้าจอใช้
+  const mapRow = (r) => {
+    const amt = parseFloat(r.amount);
+    const bal = parseFloat(r.balance);
+    let type, amount;
+    if (r.type === 'SET_BALANCE') {
+      type = 'CHECKPOINT';
+      amount = amt;
+    } else {
+      type = amt >= 0 ? 'IN' : 'OUT';
+      amount = Math.abs(amt);
+    }
+    return {
+      id: r.id,
+      timestamp: r.created_at,
+      displayTime: new Date(r.created_at).toLocaleString('th-TH'),
+      type,
+      amount,
+      reason: r.note || '',
+      balanceAfter: bal,
+    };
+  };
+
+  // โหลดรายการจากฐานข้อมูลกลาง (sync ข้ามเครื่อง)
+  const loadTransactions = async () => {
+    try {
+      const res = await fetch('/api/transactions', { cache: 'no-store' });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'โหลดข้อมูลไม่สำเร็จ');
+      const txs = (data.transactions || []).map(mapRow);
+      setTransactions(txs);
+      setCurrentBalance(txs.length ? txs[0].balanceAfter : 0);
+      setError('');
+    } catch (e) {
+      setError('เชื่อมต่อฐานข้อมูลไม่ได้: ' + e.message);
+    }
+  };
+
+  // โหลดครั้งแรก: ค่าเครื่องคำนวณจาก localStorage + รายการจากฐานข้อมูล
   useEffect(() => {
-    const saved = localStorage.getItem('crypto_transactions_v2');
-    if (saved) setTransactions(JSON.parse(saved));
     const savedSell = localStorage.getItem('last_sell_price');
     const savedBuy = localStorage.getItem('last_buy_price');
     const savedSelling = localStorage.getItem('selling_usdt');
@@ -49,56 +87,79 @@ export default function Home() {
     if (savedBuying) setBuyingUSDT(savedBuying);
     if (savedRank) setRank(savedRank);
 
-    setIsLoaded(true);
+    loadTransactions().finally(() => setIsLoaded(true));
   }, []);
 
-  // Update Balance & Save (Includes new USDT states)
+  // เก็บค่าเครื่องคำนวณไว้ในเครื่อง (ไม่ sync — เป็นค่าชั่วคราวส่วนตัว)
   useEffect(() => {
     if (!isLoaded) return;
-    localStorage.setItem('crypto_transactions_v2', JSON.stringify(transactions));
     localStorage.setItem('last_sell_price', sellPrice);
     localStorage.setItem('last_buy_price', buyPrice);
     localStorage.setItem('selling_usdt', sellingUSDT);
     localStorage.setItem('buying_usdt', buyingUSDT);
     localStorage.setItem('p2p_rank', rank);
+  }, [isLoaded, sellPrice, buyPrice, sellingUSDT, buyingUSDT, rank]);
 
-    if (transactions.length > 0) {
-      const sorted = [...transactions].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-      setCurrentBalance(sorted[0].balanceAfter);
-    } else {
-      setCurrentBalance(0);
-    }
-  }, [transactions, isLoaded, sellPrice, buyPrice, sellingUSDT, buyingUSDT, rank]);
+  const postTransaction = async (payload) => {
+    const res = await fetch('/api/transactions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || 'บันทึกไม่สำเร็จ');
+  };
 
   // Handle Scheduled Checkpoint
-  const handleSaveScheduled = () => {
-    if (!scheduledAmount) return;
-    const amountNum = parseFloat(scheduledAmount);
-    const newRecord = {
-      id: Date.now(), timestamp: new Date().toISOString(), displayTime: new Date().toLocaleString('th-TH'),
-      type: 'CHECKPOINT', timeSlot: timeSlot, amount: amountNum, reason: `ยอดคงเหลือรอบ ${timeSlot}`, balanceAfter: amountNum
-    };
-    setTransactions([newRecord, ...transactions]); setScheduledAmount('');
+  const handleSaveScheduled = async () => {
+    if (!scheduledAmount || busy) return;
+    setBusy(true);
+    try {
+      await postTransaction({ kind: 'checkpoint', amount: parseFloat(scheduledAmount), reason: `ยอดคงเหลือรอบ ${timeSlot}` });
+      setScheduledAmount('');
+      await loadTransactions();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   // Handle In/Out Transaction
-  const handleTransaction = () => {
-    if (!txAmount) return;
-    const amountNum = parseFloat(txAmount);
-    let newBalance = currentBalance;
-    if (txType === 'IN') newBalance += amountNum; else newBalance -= amountNum;
-    const newRecord = {
-      id: Date.now(), timestamp: new Date().toISOString(), displayTime: new Date().toLocaleString('th-TH'),
-      type: txType, amount: amountNum, reason: txReason || (txType === 'IN' ? 'รับเข้า' : 'จ่ายออก'), balanceAfter: newBalance
-    };
-    setTransactions([newRecord, ...transactions]); setTxAmount(''); setTxReason('');
+  const handleTransaction = async () => {
+    if (!txAmount || busy) return;
+    setBusy(true);
+    try {
+      await postTransaction({
+        kind: txType === 'IN' ? 'in' : 'out',
+        amount: parseFloat(txAmount),
+        reason: txReason || (txType === 'IN' ? 'รับเข้า' : 'จ่ายออก'),
+      });
+      setTxAmount('');
+      setTxReason('');
+      await loadTransactions();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   // Delete Transaction
-  const deleteTransaction = (id) => {
-    if(!confirm('ต้องการลบรายการนี้ใช่ไหม?')) return;
-    const updated = transactions.filter(t => t.id !== id);
-    setTransactions(updated);
+  const deleteTransaction = async (id) => {
+    if (busy) return;
+    if (!confirm('ต้องการลบรายการนี้ใช่ไหม?')) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/transactions?id=${id}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error || 'ลบไม่สำเร็จ');
+      await loadTransactions();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   // ==============================
@@ -176,8 +237,14 @@ export default function Home() {
         <div className="text-center py-4">
            {/* [UPDATE]: เปลี่ยนชื่อเป็น KRYPTONITE TECHNOLOGY */}
            <h1 className="text-2xl font-bold text-gray-900 mb-2">KRYPTONITE TECHNOLOGY</h1>
-           <p className="text-gray-500 text-sm">ระบบบันทึกและคำนวณยอดเหรียญ</p>
+           <p className="text-gray-500 text-sm">ระบบบันทึกและคำนวณยอดเหรียญ · ซิงก์ข้ามอุปกรณ์</p>
         </div>
+
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-600 text-sm font-medium rounded-2xl px-5 py-3 text-center">
+            {error}
+          </div>
+        )}
 
         {/* ZONE 1: ยอดคงเหลือล่าสุด (Top) */}
         <div className="bg-white p-10 rounded-[2.5rem] border border-indigo-50/50 shadow-[0_20px_50px_rgb(79,70,229,0.1)] relative overflow-hidden">
@@ -223,11 +290,12 @@ export default function Home() {
                   onChange={(e) => setScheduledAmount(e.target.value)}
                   className={`${inputStyle} flex-1 text-lg font-semibold`}
                 />
-                <button 
+                <button
                   onClick={handleSaveScheduled}
-                  className="bg-gray-900 hover:bg-black text-white px-8 py-4 rounded-2xl font-semibold transition-transform active:scale-95 flex items-center justify-center gap-2 shadow-lg shadow-gray-200"
+                  disabled={busy}
+                  className="bg-gray-900 hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-4 rounded-2xl font-semibold transition-transform active:scale-95 flex items-center justify-center gap-2 shadow-lg shadow-gray-200"
                 >
-                  <Save size={20} /> บันทึก
+                  <Save size={20} /> {busy ? 'กำลังบันทึก...' : 'บันทึก'}
                 </button>
               </div>
             </Card>
@@ -267,12 +335,13 @@ export default function Home() {
                   />
                 </div>
 
-                <button 
+                <button
                   onClick={handleTransaction}
-                  className={`w-full py-4 rounded-2xl text-white font-bold text-lg shadow-md transition-transform active:scale-[0.98] flex items-center justify-center gap-2
+                  disabled={busy}
+                  className={`w-full py-4 rounded-2xl text-white font-bold text-lg shadow-md transition-transform active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed
                     ${txType === 'IN' ? 'bg-green-500 hover:bg-green-600 shadow-green-200' : 'bg-red-500 hover:bg-red-600 shadow-red-200'}`}
                 >
-                  ยืนยันทำรายการ {txType === 'IN' ? 'รับเข้า' : 'จ่ายออก'}
+                  {busy ? 'กำลังบันทึก...' : `ยืนยันทำรายการ ${txType === 'IN' ? 'รับเข้า' : 'จ่ายออก'}`}
                 </button>
               </div>
             </Card>
