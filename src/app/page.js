@@ -12,6 +12,44 @@ const RANK_OPTIONS = [
 ];
 const BASE_FEE = 0.002; // ค่าธรรมเนียมฐาน 0.20%
 
+const inputStyle =
+  "w-full p-4 bg-gray-50 border border-gray-200 rounded-2xl focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all text-gray-700 font-medium placeholder:text-gray-400";
+
+// สำคัญ: ประกาศ component ไว้นอก Home เพื่อไม่ให้ถูกสร้างใหม่ทุกครั้งที่ state เปลี่ยน
+// (ถ้าอยู่ข้างใน React จะ remount ช่องกรอกทุกครั้งที่พิมพ์ ทำให้โฟกัสหลุด/คีย์บอร์ดปิด)
+const Card = ({ children, title, icon, className = "" }) => (
+  <div className={`bg-white p-6 md:p-8 rounded-[2rem] border border-gray-100 shadow-[0_8px_30px_rgb(0,0,0,0.04)] transition-all hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] ${className}`}>
+    {title && (
+      <h3 className="text-lg font-semibold text-gray-800 mb-6 flex items-center gap-3">
+        {icon && <span className="p-2 bg-gray-50 text-gray-500 rounded-xl">{icon}</span>}
+        {title}
+      </h3>
+    )}
+    {children}
+  </div>
+);
+
+// แถวแสดงผลกำไรสุทธิ ใช้ร่วมกันสำหรับ 100 / 1,000 / จำนวนกำหนดเอง USDT
+const ProfitRow = ({ label, data, highlight = false }) => {
+  const hasData = data !== null;
+  const isPositive = hasData && data.lak >= 0;
+  const sign = hasData && data.lak !== 0 ? (isPositive ? '+' : '') : '';
+  return (
+    <div className={`flex items-center justify-between gap-3 p-4 rounded-2xl border ${highlight ? 'bg-orange-50/70 border-orange-100' : 'bg-gray-50 border-gray-100'}`}>
+      <span className={`text-sm font-semibold ${highlight ? 'text-orange-700' : 'text-gray-500'}`}>{label}</span>
+      <div className="text-right">
+        <div className={`text-lg font-extrabold whitespace-nowrap ${!hasData ? 'text-gray-300' : isPositive ? 'text-green-500' : 'text-red-500'}`}>
+          {hasData ? `${sign}${data.lak.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '-'}
+          <span className="text-xs font-medium text-gray-400 ml-1">LAK</span>
+        </div>
+        <div className="text-xs font-medium text-gray-400 whitespace-nowrap">
+          {hasData ? `≈ ${sign}${data.usdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT` : '≈ - USDT'}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function Home() {
   // ==============================
   // LOGIC & STATE PART
@@ -190,42 +228,6 @@ export default function Home() {
 
   if (!isLoaded) return <div className="min-h-screen flex items-center justify-center text-gray-400">Loading...</div>;
 
-  // UI Components
-  const Card = ({ children, title, icon, className = "" }) => (
-    <div className={`bg-white p-6 md:p-8 rounded-[2rem] border border-gray-100 shadow-[0_8px_30px_rgb(0,0,0,0.04)] transition-all hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] ${className}`}>
-      {title && (
-        <h3 className="text-lg font-semibold text-gray-800 mb-6 flex items-center gap-3">
-          {icon && <span className="p-2 bg-gray-50 text-gray-500 rounded-xl">{icon}</span>}
-          {title}
-        </h3>
-      )}
-      {children}
-    </div>
-  );
-
-  const inputStyle = "w-full p-4 bg-gray-50 border border-gray-200 rounded-2xl focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all text-gray-700 font-medium placeholder:text-gray-400";
-
-  // แถวแสดงผลกำไรสุทธิ ใช้ร่วมกันสำหรับ 100 / 1,000 / จำนวนกำหนดเอง USDT
-  const ProfitRow = ({ label, data, highlight = false }) => {
-    const hasData = data !== null;
-    const isPositive = hasData && data.lak >= 0;
-    const sign = hasData && data.lak !== 0 ? (isPositive ? '+' : '') : '';
-    return (
-      <div className={`flex items-center justify-between gap-3 p-4 rounded-2xl border ${highlight ? 'bg-orange-50/70 border-orange-100' : 'bg-gray-50 border-gray-100'}`}>
-        <span className={`text-sm font-semibold ${highlight ? 'text-orange-700' : 'text-gray-500'}`}>{label}</span>
-        <div className="text-right">
-          <div className={`text-lg font-extrabold whitespace-nowrap ${!hasData ? 'text-gray-300' : isPositive ? 'text-green-500' : 'text-red-500'}`}>
-            {hasData ? `${sign}${data.lak.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '-'}
-            <span className="text-xs font-medium text-gray-400 ml-1">LAK</span>
-          </div>
-          <div className="text-xs font-medium text-gray-400 whitespace-nowrap">
-            {hasData ? `≈ ${sign}${data.usdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT` : '≈ - USDT'}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
   // Calculate total USDT for display
   const totalUSDT = parseFloat(sellingUSDT || 0) + parseFloat(buyingUSDT || 0);
 
@@ -284,7 +286,7 @@ export default function Home() {
                   <option value="23:00">23:00 น.</option>
                 </select>
                 <input 
-                  type="number" 
+                  type="number" inputMode="decimal" 
                   placeholder="ระบุยอดคงเหลือที่นับได้" 
                   value={scheduledAmount}
                   onChange={(e) => setScheduledAmount(e.target.value)}
@@ -320,7 +322,7 @@ export default function Home() {
 
                 <div className="flex flex-col md:flex-row gap-4">
                   <input 
-                    type="number" 
+                    type="number" inputMode="decimal" 
                     placeholder="จำนวน (USDT)" 
                     value={txAmount}
                     onChange={(e) => setTxAmount(e.target.value)}
@@ -477,7 +479,7 @@ export default function Home() {
                   <div>
                     <label className="block text-sm font-semibold text-gray-600 mb-2">ราคาขาย (Sell)</label>
                     <input
-                      type="number"
+                      type="number" inputMode="decimal"
                       value={sellPrice}
                       onChange={(e) => setSellPrice(e.target.value)}
                       className={`${inputStyle} text-right font-mono text-lg focus:ring-orange-100 focus:border-orange-300`}
@@ -487,7 +489,7 @@ export default function Home() {
                   <div>
                     <label className="block text-sm font-semibold text-gray-600 mb-2">ราคารับซื้อ (Buy)</label>
                     <input
-                      type="number"
+                      type="number" inputMode="decimal"
                       value={buyPrice}
                       onChange={(e) => setBuyPrice(e.target.value)}
                       className={`${inputStyle} text-right font-mono text-lg focus:ring-orange-100 focus:border-orange-300`}
@@ -512,7 +514,7 @@ export default function Home() {
                 <div className="pt-2">
                   <label className="block text-sm font-semibold text-gray-600 mb-2">จำนวนกำหนดเอง (USDT)</label>
                   <input
-                    type="number"
+                    type="number" inputMode="decimal"
                     value={customAmount}
                     onChange={(e) => setCustomAmount(e.target.value)}
                     className={`${inputStyle} text-right font-mono text-lg mb-3 focus:ring-orange-100 focus:border-orange-300`}
@@ -530,7 +532,7 @@ export default function Home() {
                     <div>
                         <label className="block text-sm font-semibold text-gray-600 mb-2">เหรียญที่ขายอยู่</label>
                         <input 
-                            type="number" 
+                            type="number" inputMode="decimal" 
                             value={sellingUSDT}
                             onChange={(e) => setSellingUSDT(e.target.value)}
                             className={`${inputStyle} text-right font-mono text-xl`}
@@ -542,7 +544,7 @@ export default function Home() {
                     <div>
                         <label className="block text-sm font-semibold text-gray-600 mb-2">เหรียญที่รอรับซื้อ</label>
                         <input 
-                            type="number" 
+                            type="number" inputMode="decimal" 
                             value={buyingUSDT}
                             onChange={(e) => setBuyingUSDT(e.target.value)}
                             className={`${inputStyle} text-right font-mono text-xl`}

@@ -4,3 +4,15 @@
 body {
     @apply bg-[#F8FAFC] text-gray-800 antialiased;
 }
+
+/* ซ่อนลูกศรขึ้น/ลงของช่องตัวเลข — ต้องการให้พิมพ์ตัวเลขเข้าไปตรง ๆ */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
