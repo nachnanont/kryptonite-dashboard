@@ -1,11 +1,20 @@
 'use client'; 
 
 import React, { useState, useEffect } from 'react';
-import { Save, Plus, Minus, Trash2, History, Calculator, Wallet, ArrowRightLeft } from 'lucide-react';
+import { Save, Plus, Minus, Trash2, History, Calculator, Wallet, ArrowRightLeft, Clock } from 'lucide-react';
+
+// ระดับสมาชิก P2P และส่วนลดค่าธรรมเนียมของแต่ละระดับ
+const RANK_OPTIONS = [
+  { value: 'none', label: 'ไม่มีระดับ', discount: 0 },
+  { value: 'bronze', label: 'Bronze', discount: 0.20 },
+  { value: 'silver', label: 'Silver', discount: 0.30 },
+  { value: 'gold', label: 'Gold', discount: 0.50 },
+];
+const BASE_FEE = 0.002; // ค่าธรรมเนียมฐาน 0.20%
 
 export default function Home() {
   // ==============================
-  // LOGIC & STATE PART 
+  // LOGIC & STATE PART
   // ==============================
   const [transactions, setTransactions] = useState([]);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -17,44 +26,49 @@ export default function Home() {
   const [txType, setTxType] = useState('IN');
   const [sellPrice, setSellPrice] = useState('');
   const [buyPrice, setBuyPrice] = useState('');
-  
+  const [rank, setRank] = useState('none');
+  const [customAmount, setCustomAmount] = useState('');
+
   // สำหรับการคำนวณ USDT รวม
   const [sellingUSDT, setSellingUSDT] = useState('');
   const [buyingUSDT, setBuyingUSDT] = useState('');
 
   // LocalStorage Setup
   useEffect(() => {
-    const saved = localStorage.getItem('crypto_transactions_v2'); 
+    const saved = localStorage.getItem('crypto_transactions_v2');
     if (saved) setTransactions(JSON.parse(saved));
     const savedSell = localStorage.getItem('last_sell_price');
     const savedBuy = localStorage.getItem('last_buy_price');
     const savedSelling = localStorage.getItem('selling_usdt');
     const savedBuying = localStorage.getItem('buying_usdt');
+    const savedRank = localStorage.getItem('p2p_rank');
 
     if (savedSell) setSellPrice(savedSell);
     if (savedBuy) setBuyPrice(savedBuy);
     if (savedSelling) setSellingUSDT(savedSelling);
     if (savedBuying) setBuyingUSDT(savedBuying);
+    if (savedRank) setRank(savedRank);
 
     setIsLoaded(true);
   }, []);
 
   // Update Balance & Save (Includes new USDT states)
   useEffect(() => {
-    if (!isLoaded) return; 
+    if (!isLoaded) return;
     localStorage.setItem('crypto_transactions_v2', JSON.stringify(transactions));
     localStorage.setItem('last_sell_price', sellPrice);
     localStorage.setItem('last_buy_price', buyPrice);
     localStorage.setItem('selling_usdt', sellingUSDT);
     localStorage.setItem('buying_usdt', buyingUSDT);
-    
+    localStorage.setItem('p2p_rank', rank);
+
     if (transactions.length > 0) {
       const sorted = [...transactions].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
       setCurrentBalance(sorted[0].balanceAfter);
     } else {
       setCurrentBalance(0);
     }
-  }, [transactions, isLoaded, sellPrice, buyPrice, sellingUSDT, buyingUSDT]);
+  }, [transactions, isLoaded, sellPrice, buyPrice, sellingUSDT, buyingUSDT, rank]);
 
   // Handle Scheduled Checkpoint
   const handleSaveScheduled = () => {
@@ -87,6 +101,32 @@ export default function Home() {
     setTransactions(updated);
   };
 
+  // ==============================
+  // เครื่องคำนวณกำไร P2P
+  // ==============================
+  const currentRank = RANK_OPTIONS.find((r) => r.value === rank) || RANK_OPTIONS[0];
+  const effectiveFee = BASE_FEE * (1 - currentRank.discount); // ค่าธรรมเนียมจริงต่อฝั่ง หลังหักส่วนลดตามระดับ
+
+  const sellNum = parseFloat(sellPrice);
+  const buyNum = parseFloat(buyPrice);
+  const pricesValid = sellPrice !== '' && buyPrice !== '' && !isNaN(sellNum) && !isNaN(buyNum);
+  const avgPrice = pricesValid ? (sellNum + buyNum) / 2 : 0;
+
+  // กำไรสุทธิ = กำไรขั้นต้น - ค่าธรรมเนียมฝั่งซื้อ - ค่าธรรมเนียมฝั่งขาย
+  const calcNetProfit = (amountUSDT) => {
+    if (!pricesValid || isNaN(amountUSDT)) return null;
+    const grossProfitLAK = amountUSDT * (sellNum - buyNum);
+    const buyFeeLAK = amountUSDT * effectiveFee * buyNum;
+    const sellFeeLAK = amountUSDT * effectiveFee * sellNum;
+    const netProfitLAK = grossProfitLAK - buyFeeLAK - sellFeeLAK;
+    const netProfitUSDT = avgPrice > 0 ? netProfitLAK / avgPrice : 0;
+    return { lak: netProfitLAK, usdt: netProfitUSDT };
+  };
+
+  const profit100 = calcNetProfit(100);
+  const profit1000 = calcNetProfit(1000);
+  const profitCustom = calcNetProfit(parseFloat(customAmount));
+
   if (!isLoaded) return <div className="min-h-screen flex items-center justify-center text-gray-400">Loading...</div>;
 
   // UI Components
@@ -103,7 +143,28 @@ export default function Home() {
   );
 
   const inputStyle = "w-full p-4 bg-gray-50 border border-gray-200 rounded-2xl focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all text-gray-700 font-medium placeholder:text-gray-400";
-  
+
+  // แถวแสดงผลกำไรสุทธิ ใช้ร่วมกันสำหรับ 100 / 1,000 / จำนวนกำหนดเอง USDT
+  const ProfitRow = ({ label, data, highlight = false }) => {
+    const hasData = data !== null;
+    const isPositive = hasData && data.lak >= 0;
+    const sign = hasData && data.lak !== 0 ? (isPositive ? '+' : '') : '';
+    return (
+      <div className={`flex items-center justify-between gap-3 p-4 rounded-2xl border ${highlight ? 'bg-orange-50/70 border-orange-100' : 'bg-gray-50 border-gray-100'}`}>
+        <span className={`text-sm font-semibold ${highlight ? 'text-orange-700' : 'text-gray-500'}`}>{label}</span>
+        <div className="text-right">
+          <div className={`text-lg font-extrabold whitespace-nowrap ${!hasData ? 'text-gray-300' : isPositive ? 'text-green-500' : 'text-red-500'}`}>
+            {hasData ? `${sign}${data.lak.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '-'}
+            <span className="text-xs font-medium text-gray-400 ml-1">LAK</span>
+          </div>
+          <div className="text-xs font-medium text-gray-400 whitespace-nowrap">
+            {hasData ? `≈ ${sign}${data.usdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT` : '≈ - USDT'}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Calculate total USDT for display
   const totalUSDT = parseFloat(sellingUSDT || 0) + parseFloat(buyingUSDT || 0);
 
@@ -230,14 +291,25 @@ export default function Home() {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                            {transactions.slice(0, 10).map((tx, index) => ( 
+                            {transactions.slice(0, 10).map((tx, index) => {
+                                const txDate = new Date(tx.timestamp);
+                                const dateStr = txDate.toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: '2-digit' });
+                                const timeStr = txDate.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false });
+                                return (
                                 <tr key={tx.id} className="hover:bg-gray-50 transition">
                                     {/* วันที่ / เวลา */}
-                                    <td className="p-4 text-gray-500 whitespace-nowrap">
-                                        <div className="text-xs text-gray-500">{tx.displayTime.split(' ')[0]}</div> 
-                                        <div className="font-medium text-gray-700">{tx.displayTime.split(' ')[1]}</div> 
+                                    <td className="p-4 whitespace-nowrap">
+                                        <div className="flex items-center gap-2.5">
+                                            <span className="flex items-center justify-center w-8 h-8 shrink-0 rounded-xl bg-gray-50 text-gray-400">
+                                                <Clock size={14} />
+                                            </span>
+                                            <div>
+                                                <div className="font-mono font-bold text-gray-800 text-sm leading-tight">{timeStr} <span className="font-sans font-normal text-gray-400">น.</span></div>
+                                                <div className="text-xs text-gray-400 leading-tight">{dateStr}</div>
+                                            </div>
+                                        </div>
                                     </td>
-                                    
+
                                     {/* รายละเอียด */}
                                     <td className="p-4 font-medium text-gray-700">
                                       <div className="flex items-center gap-2">
@@ -294,7 +366,8 @@ export default function Home() {
                                         </button>
                                     </td>
                                 </tr>
-                            ))}
+                                );
+                            })}
                             {/* จำนวนคอลัมน์ = 5 */}
                             {transactions.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-gray-400">ยังไม่มีรายการ</td></tr>}
                         </tbody>
@@ -307,54 +380,76 @@ export default function Home() {
           {/* ZONE 3: บวกลบส่วนต่าง & USDT Sum (Bottom Right - Spans 1 column) */}
           <div className="lg:col-span-1">
             
-            {/* 3.1: คำนวณส่วนต่าง (LAK) - NOT STICKY */}
-            <Card title="คำนวณส่วนต่าง (LAK)" icon={<Calculator size={20} className="text-orange-500" />} className="border-orange-100/50 shadow-orange-50">
+            {/* 3.1: เครื่องคำนวณกำไร P2P */}
+            <Card title="เครื่องคำนวณกำไร P2P" icon={<Calculator size={20} className="text-orange-500" />} className="border-orange-100/50 shadow-orange-50">
               <div className="space-y-6">
+
+                {/* เลือกระดับสมาชิก */}
                 <div>
-                  <label className="block text-sm font-semibold text-gray-600 mb-2">ราคาขาย (Sell)</label>
-                  <input 
-                    type="number" 
-                    value={sellPrice}
-                    onChange={(e) => setSellPrice(e.target.value)}
-                    className={`${inputStyle} text-right font-mono text-2xl focus:ring-orange-100 focus:border-orange-300`}
-                    placeholder="0.00"
-                  />
-                </div>
-
-                <div className="relative">
-                   <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-white p-1 rounded-full text-gray-400 border border-gray-100">
-                      <Minus size={16} />
-                   </div>
-                  <label className="block text-sm font-semibold text-gray-600 mb-2">ราคารับซื้อ (Buy)</label>
-                  <input 
-                    type="number" 
-                    value={buyPrice}
-                    onChange={(e) => setBuyPrice(e.target.value)}
-                    className={`${inputStyle} text-right font-mono text-2xl focus:ring-orange-100 focus:border-orange-300`}
-                    placeholder="0.00"
-                  />
-                </div>
-
-                <div className="pt-6 pb-2 mt-4 border-t border-dashed border-gray-200">
-                  <div className="flex justify-between items-baseline mb-1">
-                    <span className="text-gray-500 font-medium">ส่วนต่าง (กำไร)</span>
+                  <label className="block text-sm font-semibold text-gray-600 mb-2">ระดับสมาชิก</label>
+                  <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-2xl">
+                    {RANK_OPTIONS.map((r) => (
+                      <button
+                        key={r.value}
+                        onClick={() => setRank(r.value)}
+                        className={`flex flex-col items-center justify-center gap-0.5 py-2.5 rounded-xl transition-all ${
+                          rank === r.value ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                        }`}
+                      >
+                        <span className="text-sm font-bold">{r.label}</span>
+                        <span className="text-[10px] font-medium opacity-70">ลดค่าธรรมเนียม {Math.round(r.discount * 100)}%</span>
+                      </button>
+                    ))}
                   </div>
-                  {/* [UPDATE]: เงื่อนไขสีตามกำไร LAK: > 150 = เขียว, <= 150 = แดง */}
-                  {(() => {
-                    const profitDifference = sellPrice - buyPrice;
-                    
-                    // กำหนด Class สีตามเงื่อนไข: > 150 = เขียว, <= 150 = แดง
-                    const colorClass = profitDifference > 150 ? 'text-green-500' : 'text-red-500';
-                    
-                    return (
-                      <div className={`text-4xl font-extrabold text-right ${colorClass}`}>
-                        {sellPrice && buyPrice 
-                          ? profitDifference.toLocaleString() 
-                          : '0'
-                        } <span className="text-lg text-gray-400 font-medium">LAK</span>
-                      </div>
-                    );
-                  })()}
+                </div>
+
+                {/* ราคาขาย / ราคารับซื้อ */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-600 mb-2">ราคาขาย (Sell)</label>
+                    <input
+                      type="number"
+                      value={sellPrice}
+                      onChange={(e) => setSellPrice(e.target.value)}
+                      className={`${inputStyle} text-right font-mono text-lg focus:ring-orange-100 focus:border-orange-300`}
+                      placeholder="0.00"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-600 mb-2">ราคารับซื้อ (Buy)</label>
+                    <input
+                      type="number"
+                      value={buyPrice}
+                      onChange={(e) => setBuyPrice(e.target.value)}
+                      className={`${inputStyle} text-right font-mono text-lg focus:ring-orange-100 focus:border-orange-300`}
+                      placeholder="0.00"
+                    />
+                  </div>
+                </div>
+
+                <p className="text-xs text-center text-gray-400 -mt-2">
+                  หน่วย LAK / USDT · ค่าธรรมเนียมจริงต่อฝั่ง{' '}
+                  <span className="font-semibold text-gray-500">{(effectiveFee * 100).toFixed(3)}%</span>
+                  {' '}(ฐาน 0.20% ลด {Math.round(currentRank.discount * 100)}%)
+                </p>
+
+                {/* ผลลัพธ์กำไรสุทธิ: 100 / 1,000 USDT */}
+                <div className="space-y-3 pt-4 border-t border-dashed border-gray-200">
+                  <ProfitRow label="กำไรสุทธิ · 100 USDT" data={profit100} />
+                  <ProfitRow label="กำไรสุทธิ · 1,000 USDT" data={profit1000} />
+                </div>
+
+                {/* จำนวนกำหนดเอง */}
+                <div className="pt-2">
+                  <label className="block text-sm font-semibold text-gray-600 mb-2">จำนวนกำหนดเอง (USDT)</label>
+                  <input
+                    type="number"
+                    value={customAmount}
+                    onChange={(e) => setCustomAmount(e.target.value)}
+                    className={`${inputStyle} text-right font-mono text-lg mb-3 focus:ring-orange-100 focus:border-orange-300`}
+                    placeholder="เช่น 500"
+                  />
+                  <ProfitRow label={`กำไรสุทธิ · ${customAmount || 0} USDT`} data={profitCustom} highlight />
                 </div>
               </div>
             </Card>
