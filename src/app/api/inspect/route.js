@@ -34,15 +34,19 @@ export async function GET() {
         ORDER BY ordinal_position`;
       let count = null;
       let sample = null;
+      let types = null;
       try {
-        const c = await sql(`SELECT COUNT(*)::int AS n FROM "${name}"`);
-        count = c[0]?.n ?? null;
-        const s = await sql(`SELECT * FROM "${name}" LIMIT 1`);
-        sample = s[0] ?? null;
+        if (name === 'transactions') {
+          const c = await sql`SELECT COUNT(*)::int AS n FROM transactions`;
+          count = c[0]?.n ?? null;
+          const tp = await sql`SELECT DISTINCT type FROM transactions`;
+          types = tp.map((r) => r.type);
+          sample = await sql`SELECT * FROM transactions ORDER BY created_at DESC LIMIT 3`;
+        }
       } catch (e) {
         count = `err: ${e.message}`;
       }
-      details.push({ table: name, columns: cols, rowCount: count, sampleRow: sample });
+      details.push({ table: name, columns: cols, rowCount: count, distinctTypes: types, sampleRows: sample });
     }
 
     return Response.json({ ok: true, whichEnv: process.env.DATABASE_URL ? 'DATABASE_URL' : 'other', tableCount: tables.length, tables: details });
